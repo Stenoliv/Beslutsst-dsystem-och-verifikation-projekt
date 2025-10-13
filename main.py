@@ -117,7 +117,7 @@ class HybridRecommender:
             top_game_ids = scores_series.nlargest(num_recommendations).index.tolist()
             collaborative_recs = self.games_df[self.games_df["gameId"].isin(top_game_ids)]["title"].tolist()
 
-        combined_recs = collaborative_recs + content_recs
+        combined_recs = list(dict.fromkeys(content_recs + collaborative_recs))
         unique_recs = list(dict.fromkeys(combined_recs).keys())
         return unique_recs[:num_recommendations]
 
@@ -163,14 +163,29 @@ class Evaluator:
         self.title_to_id = pd.Series(games_unique_titles.gameId.values, index=games_unique_titles.title)
         print("Popularity scores calculated.\n")
 
-    def generate_all_recommendations(self):
-        print("Generating recommendations for all users...")
+    def generate_all_recommendations(self, max_users=30000):
+        print(f"Generating recommendations for up to {max_users} users...")
+
         all_recommendations = {}
+
+        # Choose a popular game as the seed
         seed_game = self.games_df["title"].value_counts().index[0]
-        for user_id in self.ratings_df["userId"].unique():
+
+        # Sample a subset of users
+        user_sample = np.random.choice(
+            self.ratings_df["userId"].unique(),
+            size=min(max_users, self.ratings_df["userId"].nunique()),
+            replace=False
+        )
+
+        for i, user_id in enumerate(user_sample, start=1):
             recs = self.recommender.recommend(user_id, seed_game, 10)
             all_recommendations[user_id] = recs
-        print("All recommendations generated.\n")
+
+            if i % 1000 == 0:
+                print(f"  Processed {i}/{len(user_sample)} users...")
+
+        print("All sampled recommendations generated.\n")
         return all_recommendations
 
     def calculate_precision_at_k(self, all_recommendations, k=10):
@@ -182,7 +197,7 @@ class Evaluator:
             liked_games = set()
             if user_id in user_groups.groups:
                 user_ratings = user_groups.get_group(user_id)
-                liked_games = set(user_ratings[user_ratings["rating"] >= 4.0]["gameId"].unique())
+                liked_games = set(user_ratings[user_ratings["rating"] >= 2.5]["gameId"].unique())
 
             hits = sum(1 for title in recs[:k] if title_to_id.get(title) in liked_games)
             precisions.append(hits / k)
