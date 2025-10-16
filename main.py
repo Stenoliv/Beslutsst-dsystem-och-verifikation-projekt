@@ -163,7 +163,7 @@ class Evaluator:
         self.title_to_id = pd.Series(games_unique_titles.gameId.values, index=games_unique_titles.title)
         print("Popularity scores calculated.\n")
 
-    def generate_all_recommendations(self, max_users=30000):
+    def generate_all_recommendations(self, max_users=1000):
         print(f"Generating recommendations for up to {max_users} users...")
 
         all_recommendations = {}
