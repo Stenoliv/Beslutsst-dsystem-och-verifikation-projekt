@@ -189,6 +189,9 @@ def delete_job(job_id: int, db: Session = Depends(get_db)):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
+    if job.status not in [JobStatus.COMPLETED, JobStatus.FAILED]:
+        raise HTTPException(status_code=500, detail="Job not finished")
+
     db.delete(job)
     db.commit()
 

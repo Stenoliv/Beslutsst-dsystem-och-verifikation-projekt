@@ -16,7 +16,6 @@ const JobDetailsModal = forwardRef<JobDetailsModalHandle, JobDetailsModalProps>(
     const [isOpen, setIsOpen] = useState(false);
     const [jobId, setJobId] = useState<number | null>(null);
     const [job, setJob] = useState<Job | null>(null);
-    const [deleting, setDeleting] = useState(false);
 
     // Expose methods to parent
     useImperativeHandle(ref, () => ({
@@ -53,27 +52,17 @@ const JobDetailsModal = forwardRef<JobDetailsModalHandle, JobDetailsModalProps>(
 
     const handleDelete = async () => {
       if (!jobId) return;
-
-      const confirmed = window.confirm(
-        `Are you sure you want to delete job #${jobId}?`
-      );
-      if (!confirmed) return;
+      if (!confirm(`Are you sure you want to delete job #${jobId}?`)) return;
 
       try {
-        setDeleting(true);
         await API.delete(`/jobs/${jobId}`);
+        onDeleted?.(jobId); // ✅ Tell parent dashboard the job is gone
         setIsOpen(false);
-
-        // ✅ trigger parent callback
-        if (onDeleted) onDeleted(jobId);
-
         setJob(null);
         setJobId(null);
-      } catch (err) {
-        console.error("Failed to delete job", err);
-        alert("Failed to delete job. Check console for details.");
-      } finally {
-        setDeleting(false);
+      } catch (err: any) {
+        console.error("Failed to delete job:", err);
+        alert(err.response?.data?.detail || "Failed to delete job");
       }
     };
 
@@ -148,10 +137,9 @@ const JobDetailsModal = forwardRef<JobDetailsModalHandle, JobDetailsModalProps>(
           <div className="mt-6 flex justify-end">
             <button
               onClick={handleDelete}
-              disabled={deleting}
               className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md transition disabled:opacity-50"
             >
-              {deleting ? "Deleting..." : "Delete Job"}
+              Delete Job
             </button>
           </div>
         </div>
