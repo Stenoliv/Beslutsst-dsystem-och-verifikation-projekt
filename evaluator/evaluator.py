@@ -1,14 +1,17 @@
 import pandas as pd
 import numpy as np
+from db.database import SessionLocal
+from db.models import Job
+from db.job_utils import update_job_progress
 
 class Evaluator:
     @staticmethod
     def safe_mean(values):
-        """Compute the mean safely, returning 0.0 for empty or NaN-only lists."""
-        if not values:
+        """Compute mean safely; return 0.0 for empty or NaN-only arrays."""
+        if len(values) == 0:
             return 0.0
         return float(np.nanmean(values))
-    
+
     def __init__(self, recommender):
         self.recommender = recommender
         self.games_df = self.recommender.games_df
@@ -18,91 +21,117 @@ class Evaluator:
         self.gameid_to_title = None
 
     def fit_recommender(self):
-        """Compute popularity scores and title ↔ gameId mapping."""
+        """Precompute popularity and mapping dictionaries."""
         rating_counts = self.ratings_df["gameId"].value_counts()
         num_users = self.ratings_df["userId"].nunique()
         self.popularity_scores = (rating_counts / num_users).to_dict()
 
-        # title ↔ gameId mappings
-        games_unique_titles = self.games_df.drop_duplicates(subset="title")
-        self.title_to_id = pd.Series(
-            games_unique_titles.gameId.values, index=games_unique_titles.title
-        ).to_dict()
-        self.gameid_to_title = pd.Series(
-            games_unique_titles.title.values, index=games_unique_titles.gameId
-        ).to_dict()
+        games_unique = self.games_df.drop_duplicates(subset="title")
+        self.title_to_id = pd.Series(games_unique.gameId.values, index=games_unique.title).to_dict()
+        self.gameid_to_title = pd.Series(games_unique.title.values, index=games_unique.gameId).to_dict()
+        self.popularity_series = pd.Series(self.popularity_scores)
 
-    def generate_all_recommendations(self, max_users=30000, random_state=42, n=10):
-        """Generate recommendations for a sample of users with multiple seed games for diversity."""
+        # For Precision@k vectorization
+        self.all_game_ids = np.array(list(self.gameid_to_title.keys()))
+        self.gameid_to_idx = {gid: idx for idx, gid in enumerate(self.all_game_ids)}
+
+    def generate_all_recommendations(
+        self, 
+        job_id: int,
+        max_users: int = 30000,
+        random_state: int = 42,
+        n: int = 10,
+        start_progress: int = 0,
+        progress_range: int = 100,
+        progress_step: int = 50
+    ):
+        """Generate recommendations for a sample of users with multiple seed games."""
         rng = np.random.default_rng(random_state)
         all_recommendations = {}
 
         unique_users = self.ratings_df["userId"].unique()
         user_sample = rng.choice(unique_users, size=min(max_users, len(unique_users)), replace=False)
 
-        for user_id in user_sample:
-            # Pick a seed game from user's liked games
-            user_liked_games = self.ratings_df[
-                (self.ratings_df["userId"] == user_id) & (self.ratings_df["rating"] >= 2.5)
-            ]
-            if not user_liked_games.empty:
-                seed_game_id = user_liked_games.sample(1, random_state=rng.integers(1e6))["gameId"].iloc[0]
-                seed_game = self.games_df.loc[self.games_df["gameId"] == seed_game_id, "title"].iloc[0]
-            else:
-                # fallback to a random game
-                seed_game = self.games_df.sample(1, random_state=rng.integers(1e6))["title"].iloc[0]
+        db = SessionLocal()
+        try:
+            for i, user_id in enumerate(user_sample, start=1):
+                # Choose a seed game
+                user_games = self.ratings_df[
+                    (self.ratings_df["userId"] == user_id) & (self.ratings_df["rating"] >= 2.5)
+                ]
+                if not user_games.empty:
+                    seed_game_id = user_games.sample(1, random_state=rng.integers(1e6))["gameId"].iloc[0]
+                    seed_game = self.games_df.loc[self.games_df["gameId"] == seed_game_id, "title"].iloc[0]
+                else:
+                    seed_game = self.games_df.sample(1, random_state=rng.integers(1e6))["title"].iloc[0]
 
-            recs = self.recommender.recommend(user_id, seed_game, n)
-            all_recommendations[user_id] = recs if recs else []
+                recs = self.recommender.recommend(user_id, seed_game, n)
+                all_recommendations[user_id] = recs if recs else []
+
+                # Update progress
+                if job_id and (i % progress_step == 0 or i == len(user_sample)):
+                    progress_percent = start_progress + int((i / len(user_sample)) * progress_range)
+                    update_job_progress(db, job_id, progress_percent)
+        finally:
+            db.close()
 
         return all_recommendations
 
     def calculate_precision_at_k(self, all_recommendations, k=10):
-        """Compute Precision@k safely using titles."""
-        liked_df = (
-            self.ratings_df[self.ratings_df["rating"] >= 2.5]
-            .groupby("userId")["gameId"]
-            .apply(set)
-            .to_dict()
-        )
+        """Fully vectorized Precision@k using boolean arrays."""
+        if not all_recommendations:
+            return 0.0
 
-        # Convert liked gameIds to titles
-        liked_titles = {
-            uid: {self.gameid_to_title[g] for g in games if g in self.gameid_to_title}
-            for uid, games in liked_df.items()
-        }
+        user_ids = np.array(list(all_recommendations.keys()))
+        num_users = len(user_ids)
+        num_games = len(self.all_game_ids)
 
-        precision_list = [
-            len(set(recs[:k]) & liked_titles.get(uid, set())) / k
-            for uid, recs in all_recommendations.items()
-            if recs  # skip empty recommendations
-        ]
-        return self.safe_mean(precision_list)
+        # Build liked boolean matrix (num_users x num_games)
+        liked_matrix = np.zeros((num_users, num_games), dtype=bool)
+        user_id_to_idx = {uid: idx for idx, uid in enumerate(user_ids)}
+
+        for uid, games in self.ratings_df[self.ratings_df["rating"] >= 2.5].groupby("userId")["gameId"]:
+            if uid in user_id_to_idx:
+                idx = user_id_to_idx[uid]
+                liked_indices = [self.gameid_to_idx[g] for g in games if g in self.gameid_to_idx]
+                liked_matrix[idx, liked_indices] = True
+
+        # Build recommendation indices
+        rec_matrix = np.zeros((num_users, k), dtype=int)
+        for i, uid in enumerate(user_ids):
+            recs = all_recommendations[uid][:k]
+            rec_matrix[i, :len(recs)] = [self.gameid_to_idx.get(self.title_to_id.get(title, -1), -1) for title in recs]
+
+        # Calculate hits
+        hits = []
+        for i in range(num_users):
+            valid_indices = rec_matrix[i] >= 0
+            if valid_indices.any():
+                hits.append(liked_matrix[i, rec_matrix[i, valid_indices]].sum())
+
+        return self.safe_mean(np.array(hits) / k)
 
     def calculate_coverage(self, all_recommendations):
-        """Compute fraction of unique games recommended."""
+        """Fraction of unique games recommended."""
+        if not all_recommendations:
+            return 0.0
+
         all_titles = np.unique([title for recs in all_recommendations.values() for title in recs])
         return len(all_titles) / max(1, self.games_df["title"].nunique())
 
     def calculate_novelty(self, all_recommendations):
-        """Compute novelty as mean -log2(popularity)."""
+        """Vectorized novelty: mean -log2(popularity)."""
         if self.popularity_scores is None or self.title_to_id is None:
             raise ValueError("Call fit_recommender() first.")
 
-        titles = np.array([title for recs in all_recommendations.values() for title in recs])
+        titles = [title for recs in all_recommendations.values() for title in recs]
+        if not titles:
+            return 0.0
 
-        # Map titles → gameId → popularity
-        game_ids = np.array([self.title_to_id.get(title, None) for title in titles])
-        popularity = np.array([
-            self.popularity_scores.get(gid, 0.0) if gid is not None else 0.0
-            for gid in game_ids
-        ])
-
+        # map titles → gameId → popularity using vectorized pandas
+        game_ids = pd.Series(titles).map(self.title_to_id)
+        popularity = game_ids.map(self.popularity_series).fillna(0.0)
         mask = popularity > 0
-        if np.any(mask):
-            novelty_values = -np.log2(popularity[mask])
-            mean_novelty = np.mean(novelty_values)
-        else:
-            mean_novelty = 0.0
-
-        return mean_novelty
+        if mask.any():
+            return float((-np.log2(popularity[mask])).mean())
+        return 0.0
