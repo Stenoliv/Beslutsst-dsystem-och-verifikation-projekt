@@ -34,12 +34,13 @@ För vår modell som vi skapade fick vi följande evaluerings resultat:
 ![alt text](images/image-8.png)
 ![alt text](images/image-2.png)
 ![alt text](images/image-9.png)
+![alt text](images/image-4.png)
+Exempel då man kör en evaluering får man realtid respons på hur mycket av jobbet är utfört.
 
 #### Exempel rekomendation
 
 Här kommer ett exempel av vad som systemet kan ge ut och hur de kan se ut:
 
-![alt text](images/image-4.png)
 ![alt text](images/image-5.png)
 ![alt text](images/image-6.png)
 ![alt text](images/image-7.png)
