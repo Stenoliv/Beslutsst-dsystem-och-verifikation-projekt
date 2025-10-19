@@ -68,8 +68,13 @@ def initialize_model(refit_content=False, refit_nmf=False):
     """
     try:
         if os.path.exists(MODEL_PATH) and not (refit_content or refit_nmf):
+            logger.info("📦 Found existing model, loading...")
             app.state.recommender = HybridRecommender.load(MODEL_PATH)
             return
+        else:
+            logger.info("🧠 No existing model found — training from scratch...")
+            refit_content = True
+            refit_nmf = True
         
         if not os.path.exists(GAMES_OUT) or not os.path.exists(RATINGS_OUT):
             app.state.GAMES_PATH, app.state.RATINGS_PATH = prepare_steam_data_optimized(
@@ -77,6 +82,7 @@ def initialize_model(refit_content=False, refit_nmf=False):
             )
         else:
             app.state.GAMES_PATH, app.state.RATINGS_PATH = GAMES_OUT, RATINGS_OUT
+        
         
         app.state.recommender = HybridRecommender(app.state.GAMES_PATH, app.state.RATINGS_PATH)
 
