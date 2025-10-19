@@ -11,10 +11,10 @@ install:
 	$(PIP) install -r requirements.txt
 	cd client && npm install
 
-# --- Run FastAPI backend ---
+# Run FastAPI backend 
 backend:
 	$(UVICORN) api:app --host 0.0.0.0 --port 8000
 
-# --- Run React frontend ---
+# Run React frontend 
 frontend:
 	cd client && npm run dev

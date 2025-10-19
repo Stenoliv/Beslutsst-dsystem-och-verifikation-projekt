@@ -10,7 +10,6 @@ import logging
 from sklearnex import patch_sklearn
 patch_sklearn(verbose=False)
 
-# ----------------- LOGGER CONFIG ----------------- #
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",

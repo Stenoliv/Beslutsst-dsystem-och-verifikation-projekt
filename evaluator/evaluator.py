@@ -128,7 +128,7 @@ class Evaluator:
         if not titles:
             return 0.0
 
-        # map titles → gameId → popularity using vectorized pandas
+        # map titles -> gameId -> popularity using vectorized pandas
         game_ids = pd.Series(titles).map(self.title_to_id)
         popularity = game_ids.map(self.popularity_series).fillna(0.0)
         mask = popularity > 0

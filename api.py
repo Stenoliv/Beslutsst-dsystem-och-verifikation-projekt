@@ -10,7 +10,7 @@ from recommender.hybrid_recommender import HybridRecommender
 from recommender.prepare_data import prepare_steam_data_optimized
 from evaluator.evaluator import Evaluator
 
-# --- DB & Models --- #
+# DB & Models 
 from db.database import get_db, init_db
 from db.models import JobType, JobStatus, Job
 from db.job_utils import (
@@ -23,7 +23,6 @@ from db.job_utils import (
     list_jobs
 )
 
-# ----------------- LOGGER CONFIG ----------------- #
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -31,18 +30,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ------------------- Paths ------------------- #
+# Paths 
 MODEL_PATH = "models/recommender.pkl"
 GAMES_OUT = "data/games_prepared.csv.gz"
 RATINGS_OUT = "data/ratings_prepared.csv.gz"
 
-# ------------------- FastAPI App ------------------- #
+# FastAPI App
 app = FastAPI(title="Steam Hybrid Recommender API")
 
-# --- Init DB --- #
+# Init DB 
 init_db()
 
-# ------------------- CORS ------------------- #
+# CORS
 origins = ["http://localhost:5173"]
 app.add_middleware(
     CORSMiddleware,
@@ -52,7 +51,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ------------------- Decorator ------------------- #
+# Decorator 
 def require_model_loaded(func):
     @wraps(func)
     async def wrapper(*args, **kwargs):
@@ -61,18 +60,18 @@ def require_model_loaded(func):
         return await func(*args, **kwargs)
     return wrapper
 
-# ------------------- Model Initialization ------------------- #
+# Model Initialization 
 def initialize_model(refit_content=False, refit_nmf=False):
     """
     Load or train the hybrid recommender model.
     """
     try:
         if os.path.exists(MODEL_PATH) and not (refit_content or refit_nmf):
-            logger.info("📦 Found existing model, loading...")
+            logger.info("Found existing model, loading...")
             app.state.recommender = HybridRecommender.load(MODEL_PATH)
             return
         else:
-            logger.info("🧠 No existing model found — training from scratch...")
+            logger.info("No existing model found — training from scratch...")
             refit_content = True
             refit_nmf = True
         
@@ -94,7 +93,7 @@ def initialize_model(refit_content=False, refit_nmf=False):
         logging.error(f"Failed to initialize model: {e}")
         raise e
 
-# ------------------- Background Job Handlers ------------------- #
+# Background Job Handlers
 def run_training_job(job_id: int):
     db_gen = get_db()
     db = next(db_gen)
@@ -144,7 +143,7 @@ def run_evaluation_job(job_id: int, max_users: int, k: int):
     finally:
         db.close()
 
-# ------------------- Startup ------------------- #
+# Startup
 @app.on_event("startup")
 async def startup_event():
     app.state.recommender = None
@@ -162,13 +161,13 @@ async def startup_event():
         db.close()
     
     asyncio.create_task(asyncio.to_thread(initialize_model))
-    logging.info("🚀 FastAPI started and initializing model...")
+    logging.info("FastAPI started and initializing model...")
 
 @app.on_event("shutdown")
 def shutdown_event_handler():
-    logging.info("🛑 Shutting down FastAPI...")
+    logging.info("Shutting down FastAPI...")
 
-# ------------------- API Endpoints ------------------- #
+# API Endpoints
 @app.post("/train")
 async def train_model(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     job = create_job(db, JobType.TRAINING)
